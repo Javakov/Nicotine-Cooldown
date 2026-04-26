@@ -1,7 +1,7 @@
 package org.javakov.antyvkid.ui
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.snap
@@ -12,13 +12,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -35,14 +32,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -55,13 +60,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.gestures.detectTapGestures
 import org.javakov.antyvkid.domain.WindowSlot
 import org.javakov.antyvkid.ui.theme.AmberWarm
 import org.javakov.antyvkid.ui.theme.CoralGlow
@@ -100,14 +104,15 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
                 Spacer(Modifier.height(20.dp))
                 TopBar()
                 Spacer(Modifier.height(28.dp))
-                StatusBadge(state.status)
                 Spacer(Modifier.weight(0.4f))
                 TimerRing(
                     progress = state.progress,
                     timeLabel = state.countdownLabel,
                     caption = captionFor(state),
                     status = state.status,
-                    pulse = state.justSubmitted
+                    pulse = state.justSubmitted,
+                    canSubmit = state.status == SnusStatus.CanSubmit,
+                    onSubmit = onSubmit,
                 )
                 Spacer(Modifier.weight(0.4f))
                 WindowPills(
@@ -115,13 +120,7 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
                     morningDone = state.morningDone,
                     eveningDone = state.eveningDone
                 )
-                Spacer(Modifier.height(24.dp))
-                SubmitButton(
-                    enabled = state.status == SnusStatus.CanSubmit,
-                    label = buttonLabel(state.status),
-                    onClick = onSubmit
-                )
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(40.dp))
             }
         }
     }
@@ -129,6 +128,18 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
 
 @Composable
 private fun TopBar() {
+    var missionOpen by remember { mutableStateOf(false) }
+
+    fun dismissMissionInfo() {
+        missionOpen = false
+    }
+    fun openMissionInfo() {
+        missionOpen = true
+    }
+
+    if (missionOpen) {
+        MissionInfoDialog(onDismiss = ::dismissMissionInfo)
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -148,92 +159,91 @@ private fun TopBar() {
             )
         }
         Spacer(Modifier.width(12.dp))
-        ScheduleChip()
+        MissionInfoChip(onClick = ::openMissionInfo)
     }
 }
 
 @Composable
-private fun ScheduleChip() {
+private fun MissionInfoChip(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
+            .size(40.dp)
+            .clip(CircleShape)
             .background(
                 Brush.linearGradient(
-                    listOf(MidnightVeil.copy(alpha = 0.85f), MidnightSoft.copy(alpha = 0.85f))
+                    colors = listOf(MidnightVeil, MidnightSoft),
                 )
             )
-            .border(1.dp, GlassStrokeSoft, RoundedCornerShape(18.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .border(1.dp, GlassStrokeSoft, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(MintGlow)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "09:00 · 21:00",
-                style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 2.sp),
-                color = InkPrimary,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
+        InvertedExclamationGlyph(color = InkMuted)
+    }
+}
+
+/** «¡» — точка и штрих с явным зазором, чтобы не сливались в «палку». */
+@Composable
+private fun InvertedExclamationGlyph(
+    modifier: Modifier = Modifier,
+    color: Color = InkMuted,
+) {
+    Canvas(modifier = modifier.size(width = 16.dp, height = 22.dp)) {
+        val cx = size.width / 2f
+        val dotR = 2.5.dp.toPx()
+        val gap = 3.5.dp.toPx()
+        val stemW = 2.2.dp.toPx()
+        val padTop = 2.dp.toPx()
+        val dotCy = padTop + dotR
+        drawCircle(
+            color = color,
+            radius = dotR,
+            center = Offset(cx, dotCy),
+        )
+        val stemTop = dotCy + dotR + gap
+        val stemBottom = size.height - 2.5.dp.toPx()
+        drawLine(
+            color = color,
+            start = Offset(cx, stemTop),
+            end = Offset(cx, stemBottom),
+            strokeWidth = stemW,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
 @Composable
-private fun StatusBadge(status: SnusStatus) {
-    val targetColor = statusAccent(status)
-    val color by animateColorAsState(targetColor, tween(450), label = "badge")
-    val text = when (status) {
-        SnusStatus.CanSubmit -> "Можно принять"
-        SnusStatus.AlreadyUsed -> "Уже принято в этом окне"
-        SnusStatus.Waiting -> "Ожидание окна"
-        SnusStatus.Blocked -> "Время сбито · блокировка"
-    }
-    val pulseTransition = rememberInfiniteTransition(label = "badge-pulse")
-    val pulse by pulseTransition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "pulse-alpha"
-    )
-
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(50))
-            .padding(horizontal = 18.dp, vertical = 10.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(color.copy(alpha = pulse))
+private fun MissionInfoDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Зачем это приложение",
+                style = MaterialTheme.typography.titleLarge,
+                color = InkPrimary
             )
-            Spacer(Modifier.width(10.dp))
-            AnimatedContent(
-                targetState = text,
-                transitionSpec = {
-                    (fadeIn(tween(300)) + slideInVertically { it / 3 })
-                        .togetherWith(fadeOut(tween(180)) + slideOutVertically { -it / 3 })
+        },
+        text = {
+            Text(
+                text = buildString {
+                    append("Идея простая: меньше никотина в день и шаг к тому, чтобы бросить.\n\n")
+                    append("Одно правило для себя: дозернулся только тогда, когда нажал на таймер. ")
+                    append("Без этой честной связи приложение по смыслу бесполезно.")
                 },
-                label = "badge-text"
-            ) { value ->
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = InkPrimary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                style = MaterialTheme.typography.bodyMedium,
+                color = InkSecondary,
+                textAlign = TextAlign.Start
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Понятно", color = AmberWarm)
             }
-        }
-    }
+        },
+        containerColor = MidnightCore,
+        titleContentColor = InkPrimary,
+        textContentColor = InkSecondary
+    )
 }
 
 @Composable
@@ -242,8 +252,25 @@ private fun TimerRing(
     timeLabel: String,
     caption: String,
     status: SnusStatus,
-    pulse: Boolean
+    pulse: Boolean,
+    canSubmit: Boolean,
+    onSubmit: () -> Unit,
 ) {
+    val tapInteraction = remember { MutableInteractionSource() }
+    val pressed by tapInteraction.collectIsPressedAsState()
+    val tapScale by animateFloatAsState(
+        targetValue = if (pressed && canSubmit) 0.96f else 1f,
+        animationSpec = spring(
+            stiffness = Spring.StiffnessMedium,
+            dampingRatio = Spring.DampingRatioMediumBouncy
+        ),
+        label = "ring-tap-scale"
+    )
+    val submitRipple = ripple(
+        bounded = true,
+        color = MintGlow.copy(alpha = 0.38f),
+    )
+
     val accent = statusAccent(status)
     // Прогресс приходит ~30 раз/с из ViewModel — snap без «догоняющего» tween, дуга визуально живёт.
     val animatedProgress by animateFloatAsState(
@@ -257,41 +284,67 @@ private fun TimerRing(
         label = "ring-pulse"
     )
     val haloPulse by rememberInfiniteTransition(label = "halo").animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
+        initialValue = 0.72f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Reverse),
         label = "halo-amp"
     )
+    val haloAngle by rememberInfiniteTransition(label = "halo-drift").animateFloat(
+        initialValue = 0f,
+        targetValue = (PI * 2).toFloat(),
+        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
+        label = "halo-orbit"
+    )
 
-    val maxSize = LocalConfiguration.current.screenWidthDp.dp - 48.dp
+    val maxSize = with(LocalDensity.current) {
+        LocalWindowInfo.current.containerSize.width.toDp()
+    } - 48.dp
     val ringSize = if (maxSize > 320.dp) 320.dp else maxSize
 
     Box(
         modifier = Modifier
             .size(ringSize)
-            .scale(scale),
+            .scale(scale * tapScale)
+            .clip(CircleShape)
+            .then(
+                if (canSubmit) {
+                    Modifier.clickable(
+                        interactionSource = tapInteraction,
+                        indication = submitRipple,
+                        onClick = onSubmit,
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val outerRadius = size.minDimension / 2f
             val stroke = 14.dp.toPx()
             val arcRadius = outerRadius - 16.dp.toPx() - stroke / 2f
             val discRadius = arcRadius - stroke / 2f - 1.dp.toPx()
 
-            // Soft halo — fades to transparent at the corners so no square edge
+            val driftPx = 9.dp.toPx()
+            val haloCx = center.x + driftPx * 0.45f * cos(haloAngle.toDouble()).toFloat()
+            val haloCy = center.y + driftPx * 0.32f * sin((haloAngle * 1.15f).toDouble()).toFloat()
+            val haloBreathe = sin((haloAngle * 2.1f).toDouble()).toFloat() * 0.5f + 0.5f
+            val haloRadius = outerRadius * (0.93f + 0.11f * haloBreathe)
+
+            // Soft halo — лёгкий пульс яркости + медленный сдвиг центра (песочное «дыхание»)
             drawCircle(
                 brush = Brush.radialGradient(
                     colorStops = arrayOf(
-                        0f to accent.copy(alpha = 0.42f * haloPulse),
-                        0.55f to accent.copy(alpha = 0.18f * haloPulse),
-                        0.85f to accent.copy(alpha = 0.04f),
+                        0f to accent.copy(alpha = 0.46f * haloPulse),
+                        0.48f to accent.copy(alpha = 0.2f * haloPulse),
+                        0.82f to accent.copy(alpha = 0.05f),
                         1f to Color.Transparent
                     ),
-                    center = center,
-                    radius = outerRadius
+                    center = Offset(haloCx, haloCy),
+                    radius = haloRadius
                 ),
-                radius = outerRadius,
-                center = center
+                radius = haloRadius,
+                center = Offset(haloCx, haloCy)
             )
 
             // Disc fill
@@ -346,8 +399,8 @@ private fun TimerRing(
             val tickInner = tickOuter - tickLen
             for (i in 0 until 24) {
                 val angle = Math.toRadians((i * 15f - 90f).toDouble())
-                val c = kotlin.math.cos(angle).toFloat()
-                val s = kotlin.math.sin(angle).toFloat()
+                val c = cos(angle).toFloat()
+                val s = sin(angle).toFloat()
                 drawLine(
                     color = if (i % 6 == 0) GlassStroke else GlassStrokeSoft,
                     start = Offset(center.x + c * tickInner, center.y + s * tickInner),
@@ -377,7 +430,10 @@ private fun TimerRing(
             Spacer(Modifier.height(8.dp))
             Text(
                 text = caption,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    letterSpacing = 2.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
                 color = InkSecondary,
                 textAlign = TextAlign.Center
             )
@@ -401,7 +457,7 @@ private fun WindowPills(
             time = "09:00",
             active = currentWindow == WindowSlot.MORNING,
             done = morningDone,
-            accent = MintCore
+            accent = AmberWarm
         )
         WindowPill(
             modifier = Modifier.weight(1f),
@@ -409,7 +465,7 @@ private fun WindowPills(
             time = "21:00",
             active = currentWindow == WindowSlot.EVENING,
             done = eveningDone,
-            accent = VioletGlow
+            accent = AmberWarm
         )
     }
 }
@@ -485,91 +541,25 @@ private fun WindowPill(
 }
 
 @Composable
-private fun SubmitButton(
-    enabled: Boolean,
-    label: String,
-    onClick: () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.96f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "btn-scale"
-    )
-    val gradientStart by animateColorAsState(
-        if (enabled) MintCore else MidnightSoft,
-        tween(450),
-        label = "btn-grad-start"
-    )
-    val gradientEnd by animateColorAsState(
-        if (enabled) MintGlow else MidnightCore,
-        tween(450),
-        label = "btn-grad-end"
-    )
-    val textColor by animateColorAsState(
-        if (enabled) MidnightDeep else InkMuted,
-        tween(450),
-        label = "btn-text"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(72.dp)
-            .scale(scale)
-            .clip(RoundedCornerShape(26.dp))
-            .drawBehind {
-                if (enabled) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(MintGlow.copy(alpha = 0.45f), Color.Transparent),
-                            radius = size.maxDimension * 0.7f,
-                            center = Offset(size.width / 2f, size.height + 30f)
-                        )
-                    )
-                }
-            }
-            .background(
-                brush = Brush.linearGradient(listOf(gradientStart, gradientEnd))
-            )
-            .border(1.dp, if (enabled) MintCore.copy(alpha = 0.6f) else GlassStrokeSoft, RoundedCornerShape(26.dp))
-            .pointerInput(enabled) {
-                if (enabled) {
-                    detectTapGestures(onTap = { onClick() })
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(textColor.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("◉", color = textColor, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.width(14.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleLarge.copy(letterSpacing = 2.sp),
-                color = textColor,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
-
-@Composable
 private fun BackgroundAura(status: SnusStatus) {
     val transition = rememberInfiniteTransition(label = "aurora")
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(14000, easing = LinearEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
         label = "aurora-phase"
+    )
+    val breathe by transition.animateFloat(
+        initialValue = 0.52f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "aurora-breathe"
+    )
+    val orbit by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = (PI * 2).toFloat(),
+        animationSpec = infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Restart),
+        label = "aurora-orbit"
     )
     val accent = statusAccent(status)
     val secondary = when (status) {
@@ -578,36 +568,58 @@ private fun BackgroundAura(status: SnusStatus) {
         SnusStatus.Waiting -> VioletGlow
         SnusStatus.Blocked -> CoralGlow
     }
+    val waiting = status == SnusStatus.Waiting
+    val accentAlphaBase = if (waiting) 0.32f else 0.28f
+    val accentAlphaSwing = if (waiting) 0.2f else 0.14f
+    val radiusSwing = if (waiting) 0.22f else 0.16f
+    val driftAmpX = if (waiting) 0.12f else 0.08f
+    val driftAmpY = if (waiting) 0.09f else 0.06f
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Top blob
+        // Главный тёплый «песок» за таймером — орбита + пульс яркости/радиуса (раньше почти не было видно из‑за blur)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .blur(120.dp)
+                .blur(110.dp)
                 .drawBehind {
+                    val driftX = driftAmpX * sin(orbit.toDouble()).toFloat()
+                    val driftY = driftAmpY * cos(orbit.toDouble() * 0.84).toFloat()
+                    val cx = size.width * (0.4f + 0.08f * phase + driftX)
+                    val cy = size.height * (0.34f + 0.06f * (1f - phase) + driftY)
+                    val rad = size.minDimension * (0.56f + radiusSwing * breathe)
+                    val alpha = (accentAlphaBase + accentAlphaSwing * breathe).coerceIn(0.04f, 0.58f)
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(accent.copy(alpha = 0.35f), Color.Transparent),
-                            center = Offset(size.width * (0.3f + 0.1f * phase), size.height * 0.4f),
-                            radius = size.minDimension * 0.7f
-                        )
+                            colors = listOf(accent.copy(alpha = alpha), Color.Transparent),
+                            center = Offset(cx, cy),
+                            radius = rad
+                        ),
+                        radius = rad,
+                        center = Offset(cx, cy)
                     )
                 }
         )
 
-        // Bottom-right blob
+        // Второй слой — мягкий контраст, тоже дышит
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .blur(140.dp)
+                .blur(130.dp)
                 .drawBehind {
+                    val ox = 0.05f * sin((orbit * 0.65f).toDouble()).toFloat()
+                    val oy = 0.04f * cos((orbit * 0.5f).toDouble()).toFloat()
+                    val cx = size.width * (0.82f - 0.1f * phase + ox)
+                    val cy = size.height * (0.74f + 0.06f * phase + oy)
+                    val rad = size.minDimension * (0.52f + 0.12f * (1f - breathe * 0.35f))
+                    val alpha = (0.22f + 0.12f * breathe) * if (waiting) 1.1f else 1f
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(secondary.copy(alpha = 0.32f), Color.Transparent),
-                            center = Offset(size.width * (0.85f - 0.08f * phase), size.height * (0.78f + 0.05f * phase)),
-                            radius = size.minDimension * 0.6f
-                        )
+                            colors = listOf(secondary.copy(alpha = alpha.coerceIn(0.08f, 0.42f)), Color.Transparent),
+                            center = Offset(cx, cy),
+                            radius = rad
+                        ),
+                        radius = rad,
+                        center = Offset(cx, cy)
                     )
                 }
         )
@@ -650,9 +662,3 @@ private fun timerCaptionTop(status: SnusStatus): String = when (status) {
     SnusStatus.Blocked -> "БЛОКИРОВКА"
 }
 
-private fun buttonLabel(status: SnusStatus): String = when (status) {
-    SnusStatus.CanSubmit -> "ПРИНЯТЬ"
-    SnusStatus.AlreadyUsed -> "УЖЕ ПРИНЯТО"
-    SnusStatus.Waiting -> "ОЖИДАНИЕ ОКНА"
-    SnusStatus.Blocked -> "БЛОКИРОВКА"
-}
