@@ -92,7 +92,7 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         val current = WindowCalculator.currentWindow(now)
         val next = WindowCalculator.nextWindow(now)
 
-        val (status, target) = when {
+        val (realStatus, target) = when {
             rollback -> SnusStatus.Blocked to next.opensAt
             current != null && alreadyUsedInWindow(persisted.lastSubmitTimestamp, current) ->
                 SnusStatus.AlreadyUsed to next.opensAt
@@ -102,11 +102,11 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
 
         val remainingMs = target.toInstant().toEpochMilli() - now.toInstant().toEpochMilli()
         val seconds = (remainingMs / 1000L).coerceAtLeast(0L)
-        val progress = computeProgress(status, now, current, next)
+        val progress = computeProgress(realStatus, now, current, next)
 
         _state.update {
             it.copy(
-                status = status,
+                status = realStatus,
                 countdownSeconds = seconds,
                 countdownLabel = formatHms(seconds),
                 currentWindow = current?.slot,
@@ -144,27 +144,52 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
                 val openMs = current!!.opensAt.toInstant().toEpochMilli().toFloat()
                 val closeMs = current.closesAt.toInstant().toEpochMilli().toFloat()
                 val total = closeMs - openMs
+                // Как в «Ожидании»: дуга нарастает по часу от открытия к закрытию (одинаковое направление отметки -90°).
                 if (total <= 0f) 0f
-                else (1f - (nowMs - openMs) / total).coerceIn(0f, 1f)
+                else ((nowMs - openMs) / total).coerceIn(0f, 1f)
             }
-            else -> {
-                val anchor = previousWindow(next, now)
-                val total = (next.opensAt.toInstant().toEpochMilli() - anchor.toInstant().toEpochMilli())
-                    .toFloat()
-                    .coerceAtLeast(1f)
-                val passed = (nowMs - anchor.toInstant().toEpochMilli()).coerceAtLeast(0f)
-                (passed / total).coerceIn(0f, 1f)
+            SnusStatus.AlreadyUsed -> {
+                // Раньше якорь брался как «конец другого окна» и оказывался в будущем относительно now
+                // внутри текущего часа — passed обнулялся, дуга не двигалась.
+                if (current != null) {
+                    val anchorMs = current.opensAt.toInstant().toEpochMilli().toFloat()
+                    val endMs = next.opensAt.toInstant().toEpochMilli().toFloat()
+                    val total = (endMs - anchorMs).coerceAtLeast(1f)
+                    val passed = (nowMs - anchorMs).coerceIn(0f, total)
+                    (passed / total).coerceIn(0f, 1f)
+                } else {
+                    progressTowardNextWindow(nowMs, next)
+                }
+            }
+            else -> progressTowardNextWindow(nowMs, next)
+        }
+    }
+
+    /**
+     * Начало предыдущего в цикле слота относительно [next.opensAt] (не конец часа).
+     * Совпадает с якорем «Следующее через» ([current.opensAt]), чтобы при смене на «Ожидание» дуга не сбрасывалась.
+     */
+    private fun opensAtBeforeNext(next: WindowInfo): ZonedDateTime {
+        val zone = WindowCalculator.zone()
+        val nextDay = next.opensAt.toLocalDate()
+        return when (next.slot) {
+            WindowSlot.EVENING ->
+                java.time.LocalDateTime.of(nextDay, WindowSlot.MORNING.openTime()).atZone(zone)
+            WindowSlot.MORNING -> {
+                val prevDay = nextDay.minusDays(1)
+                java.time.LocalDateTime.of(prevDay, WindowSlot.EVENING.openTime()).atZone(zone)
             }
         }
     }
 
-    private fun previousWindow(next: WindowInfo, now: ZonedDateTime): ZonedDateTime {
-        val zone = WindowCalculator.zone()
-        val today = now.toLocalDate()
-        return when (next.slot) {
-            WindowSlot.EVENING -> java.time.LocalDateTime.of(today, WindowSlot.MORNING.closeTime()).atZone(zone)
-            WindowSlot.MORNING -> java.time.LocalDateTime.of(today, WindowSlot.EVENING.closeTime()).atZone(zone)
-        }
+    /** Прогресс от открытия предыдущего слота до открытия next (ожидание, блокировка, запасной AlreadyUsed). */
+    private fun progressTowardNextWindow(nowMs: Float, next: WindowInfo): Float {
+        val anchor = opensAtBeforeNext(next)
+        val endMs = next.opensAt.toInstant().toEpochMilli().toFloat()
+        val startMs = anchor.toInstant().toEpochMilli().toFloat()
+        val total = (endMs - startMs).coerceAtLeast(1f)
+        val passed = (nowMs - startMs).coerceIn(0f, total)
+        return (passed / total).coerceIn(0f, 1f)
     }
 
     private fun formatHms(seconds: Long): String {

@@ -38,6 +38,7 @@ import kotlin.math.sin
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -82,7 +83,6 @@ import org.javakov.antyvkid.ui.theme.MidnightDeep
 import org.javakov.antyvkid.ui.theme.MidnightSoft
 import org.javakov.antyvkid.ui.theme.MidnightVeil
 import org.javakov.antyvkid.ui.theme.MintCore
-import org.javakov.antyvkid.ui.theme.MintGlow
 import org.javakov.antyvkid.ui.theme.VioletGlow
 
 @Composable
@@ -102,7 +102,7 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Spacer(Modifier.height(20.dp))
-                TopBar()
+                TopBar(timerStatus = state.status)
                 Spacer(Modifier.height(28.dp))
                 Spacer(Modifier.weight(0.4f))
                 TimerRing(
@@ -116,6 +116,7 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
                 )
                 Spacer(Modifier.weight(0.4f))
                 WindowPills(
+                    timerStatus = state.status,
                     currentWindow = state.currentWindow,
                     morningDone = state.morningDone,
                     eveningDone = state.eveningDone
@@ -127,7 +128,7 @@ fun SnusScreen(state: SnusUiState, onSubmit: () -> Unit) {
 }
 
 @Composable
-private fun TopBar() {
+private fun TopBar(timerStatus: SnusStatus) {
     var missionOpen by remember { mutableStateOf(false) }
 
     fun dismissMissionInfo() {
@@ -138,7 +139,10 @@ private fun TopBar() {
     }
 
     if (missionOpen) {
-        MissionInfoDialog(onDismiss = ::dismissMissionInfo)
+        MissionInfoDialog(
+            onDismiss = ::dismissMissionInfo,
+            timerStatus = timerStatus
+        )
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -213,7 +217,8 @@ private fun InvertedExclamationGlyph(
 }
 
 @Composable
-private fun MissionInfoDialog(onDismiss: () -> Unit) {
+private fun MissionInfoDialog(onDismiss: () -> Unit, timerStatus: SnusStatus) {
+    val accentColor = statusAccent(timerStatus)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -236,8 +241,11 @@ private fun MissionInfoDialog(onDismiss: () -> Unit) {
             )
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Понятно", color = AmberWarm)
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = accentColor)
+            ) {
+                Text("Понятно")
             }
         },
         containerColor = MidnightCore,
@@ -266,12 +274,11 @@ private fun TimerRing(
         ),
         label = "ring-tap-scale"
     )
+    val accent = statusAccent(status)
     val submitRipple = ripple(
         bounded = true,
-        color = MintGlow.copy(alpha = 0.38f),
+        color = accent.copy(alpha = 0.38f),
     )
-
-    val accent = statusAccent(status)
     // Прогресс приходит ~30 раз/с из ViewModel — snap без «догоняющего» tween, дуга визуально живёт.
     val animatedProgress by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
@@ -443,10 +450,12 @@ private fun TimerRing(
 
 @Composable
 private fun WindowPills(
+    timerStatus: SnusStatus,
     currentWindow: WindowSlot?,
     morningDone: Boolean,
     eveningDone: Boolean
 ) {
+    val accent = statusAccent(timerStatus)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -457,7 +466,7 @@ private fun WindowPills(
             time = "09:00",
             active = currentWindow == WindowSlot.MORNING,
             done = morningDone,
-            accent = AmberWarm
+            accent = accent
         )
         WindowPill(
             modifier = Modifier.weight(1f),
@@ -465,7 +474,7 @@ private fun WindowPills(
             time = "21:00",
             active = currentWindow == WindowSlot.EVENING,
             done = eveningDone,
-            accent = AmberWarm
+            accent = accent
         )
     }
 }
@@ -479,8 +488,11 @@ private fun WindowPill(
     done: Boolean,
     accent: Color
 ) {
+    val inactiveBorder = accent.copy(alpha = 0.26f)
     val borderColor by animateColorAsState(
-        if (active) accent else GlassStrokeSoft, tween(450), label = "pill-border"
+        if (active) accent else inactiveBorder,
+        tween(450),
+        label = "pill-border"
     )
     val bgColor by animateColorAsState(
         if (active) accent.copy(alpha = 0.10f) else MidnightCore.copy(alpha = 0.6f),
@@ -510,7 +522,7 @@ private fun WindowPill(
                     )
                     .border(
                         1.dp,
-                        if (done) accent else GlassStrokeSoft,
+                        if (done) accent else accent.copy(alpha = 0.28f),
                         CircleShape
                     ),
                 contentAlignment = Alignment.Center
@@ -652,7 +664,7 @@ private fun captionFor(state: SnusUiState): String = when (state.status) {
     SnusStatus.CanSubmit -> "до закрытия окна"
     SnusStatus.AlreadyUsed -> "до окна ${state.nextWindowAtLabel}"
     SnusStatus.Waiting -> "до окна ${state.nextWindowAtLabel}"
-    SnusStatus.Blocked -> "проверьте системное время"
+    SnusStatus.Blocked -> "проверьте системное\nвремя"
 }
 
 private fun timerCaptionTop(status: SnusStatus): String = when (status) {
