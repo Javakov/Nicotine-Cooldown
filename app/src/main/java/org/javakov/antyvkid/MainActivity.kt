@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
 
     private var bgPlayer: MediaPlayer? = null
     private var soundtrackRawId: Int? = null
+    private var lastStatus: SnusStatus = SnusStatus.Waiting
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,8 +55,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateSoundtrack(status: SnusStatus) {
+        lastStatus = status
         val resId = rawResForStatus(status)
-        if (resId == soundtrackRawId && bgPlayer != null) return
+        if (resId == soundtrackRawId && bgPlayer?.isPlaying == true) return
         releaseSoundtrackPlayerOnly()
         val player = MediaPlayer.create(this, resId)?.apply {
             isLooping = true
@@ -66,6 +68,22 @@ class MainActivity : ComponentActivity() {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             )
+            // На части устройств isLooping не срабатывает для MP3 — completion вызывается
+            // вместо перезапуска. Перезапускаем вручную как запасной вариант.
+            setOnCompletionListener {
+                bgPlayer?.release()
+                bgPlayer = null
+                soundtrackRawId = null
+                if (!isFinishing) updateSoundtrack(lastStatus)
+            }
+            // При тихом сбое плеера восстанавливаем воспроизведение.
+            setOnErrorListener { _, _, _ ->
+                bgPlayer?.release()
+                bgPlayer = null
+                soundtrackRawId = null
+                if (!isFinishing) updateSoundtrack(lastStatus)
+                true
+            }
             start()
         }
         bgPlayer = player

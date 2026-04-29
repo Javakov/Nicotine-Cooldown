@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -163,12 +162,12 @@ private fun TopBar(timerStatus: SnusStatus) {
             )
         }
         Spacer(Modifier.width(12.dp))
-        MissionInfoChip(onClick = ::openMissionInfo)
+        MissionInfoChip(accent = statusAccent(timerStatus), onClick = ::openMissionInfo)
     }
 }
 
 @Composable
-private fun MissionInfoChip(onClick: () -> Unit) {
+private fun MissionInfoChip(accent: Color, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)
@@ -178,7 +177,7 @@ private fun MissionInfoChip(onClick: () -> Unit) {
                     colors = listOf(MidnightVeil, MidnightSoft),
                 )
             )
-            .border(1.dp, GlassStrokeSoft, CircleShape)
+            .border(1.dp, accent.copy(alpha = 0.28f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -279,10 +278,9 @@ private fun TimerRing(
         bounded = true,
         color = accent.copy(alpha = 0.38f),
     )
-    // Прогресс приходит ~30 раз/с из ViewModel — snap без «догоняющего» tween, дуга визуально живёт.
     val animatedProgress by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
-        animationSpec = snap(),
+        animationSpec = tween(durationMillis = 1100, easing = LinearEasing),
         label = "ring-progress"
     )
     val scale by animateFloatAsState(
@@ -386,7 +384,8 @@ private fun TimerRing(
                 style = Stroke(width = stroke, cap = StrokeCap.Round)
             )
 
-            // Progress — solid accent, no rotation, clean ring
+            // Progress: StrokeCap.Butt даёт ровный старт ровно в -90° (12 часов),
+            // без «выпирания» влево. Круглый колпачок рисуем вручную только на конце дуги.
             if (animatedProgress > 0f) {
                 drawArc(
                     color = accent,
@@ -395,7 +394,16 @@ private fun TimerRing(
                     useCenter = false,
                     topLeft = arcTopLeft,
                     size = arcSize,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                    style = Stroke(width = stroke, cap = StrokeCap.Butt)
+                )
+                val endAngleRad = Math.toRadians((-90.0 + 360.0 * animatedProgress))
+                drawCircle(
+                    color = accent,
+                    radius = stroke / 2f,
+                    center = Offset(
+                        center.x + arcRadius * cos(endAngleRad).toFloat(),
+                        center.y + arcRadius * sin(endAngleRad).toFloat()
+                    )
                 )
             }
 

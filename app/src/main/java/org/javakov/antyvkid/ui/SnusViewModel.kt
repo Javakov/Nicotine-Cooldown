@@ -45,12 +45,12 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         viewModelScope.launch {
             var tick = 0
             while (true) {
-                if (tick % 32 == 0) {
+                if (tick % 4 == 0) {
                     refreshPersistedAndPush()
                 } else {
                     pushFromClockOnly()
                 }
-                delay(32L)
+                delay(1000L)
                 tick++
             }
         }
@@ -63,9 +63,9 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
             if (nowMillis < persisted.lastKnownSystemTime) return@launch
             val now = ZonedDateTime.now(WindowCalculator.zone())
             val window = WindowCalculator.currentWindow(now) ?: return@launch
-            if (alreadyUsedInWindow(persisted.lastSubmitTimestamp, window)) return@launch
-            repo.recordSubmit(nowMillis)
+            if (alreadyUsedInWindow(persisted, window)) return@launch
             _state.update { it.copy(justSubmitted = true) }
+            repo.recordSubmit(nowMillis, window.slot)
             refreshPersistedAndPush()
             delay(900L)
             _state.update { it.copy(justSubmitted = false) }
@@ -94,7 +94,7 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
 
         val (realStatus, target) = when {
             rollback -> SnusStatus.Blocked to next.opensAt
-            current != null && alreadyUsedInWindow(persisted.lastSubmitTimestamp, current) ->
+            current != null && alreadyUsedInWindow(persisted, current) ->
                 SnusStatus.AlreadyUsed to next.opensAt
             current != null -> SnusStatus.CanSubmit to current.closesAt
             else -> SnusStatus.Waiting to next.opensAt
@@ -119,17 +119,24 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         }
     }
 
-    private fun alreadyUsedInWindow(lastSubmitMillis: Long, window: WindowInfo): Boolean {
-        if (lastSubmitMillis <= 0L) return false
-        val zoned = Instant.ofEpochMilli(lastSubmitMillis).atZone(WindowCalculator.zone())
+    private fun alreadyUsedInWindow(persisted: SnusState, window: WindowInfo): Boolean {
+        val ts = when (window.slot) {
+            WindowSlot.MORNING -> persisted.lastMorningSubmitTimestamp
+            WindowSlot.EVENING -> persisted.lastEveningSubmitTimestamp
+        }
+        if (ts <= 0L) return false
+        val zoned = Instant.ofEpochMilli(ts).atZone(WindowCalculator.zone())
         return window.contains(zoned)
     }
 
     private fun isWindowDoneToday(state: SnusState, slot: WindowSlot, now: ZonedDateTime): Boolean {
-        if (state.lastSubmitTimestamp <= 0L) return false
-        val zoned = Instant.ofEpochMilli(state.lastSubmitTimestamp).atZone(WindowCalculator.zone())
-        if (zoned.toLocalDate() != now.toLocalDate()) return false
-        return zoned.hour == slot.openHour
+        val ts = when (slot) {
+            WindowSlot.MORNING -> state.lastMorningSubmitTimestamp
+            WindowSlot.EVENING -> state.lastEveningSubmitTimestamp
+        }
+        if (ts <= 0L) return false
+        val zoned = Instant.ofEpochMilli(ts).atZone(WindowCalculator.zone())
+        return zoned.toLocalDate() == now.toLocalDate()
     }
 
     private fun computeProgress(
@@ -138,25 +145,24 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         current: WindowInfo?,
         next: WindowInfo
     ): Float {
-        val nowMs = now.toInstant().toEpochMilli().toFloat()
+        // Вычитание делаем через Long, чтобы избежать потери точности Float (~131 072 мс на
+        // значениях ~1.746×10¹²). В Float конвертируем только маленькие разности.
+        val nowMs = now.toInstant().toEpochMilli()
         return when (status) {
             SnusStatus.CanSubmit -> {
-                val openMs = current!!.opensAt.toInstant().toEpochMilli().toFloat()
-                val closeMs = current.closesAt.toInstant().toEpochMilli().toFloat()
+                val openMs = current!!.opensAt.toInstant().toEpochMilli()
+                val closeMs = current.closesAt.toInstant().toEpochMilli()
                 val total = closeMs - openMs
-                // Как в «Ожидании»: дуга нарастает по часу от открытия к закрытию (одинаковое направление отметки -90°).
-                if (total <= 0f) 0f
-                else ((nowMs - openMs) / total).coerceIn(0f, 1f)
+                if (total <= 0L) 0f
+                else ((nowMs - openMs).toFloat() / total.toFloat()).coerceIn(0f, 1f)
             }
             SnusStatus.AlreadyUsed -> {
-                // Раньше якорь брался как «конец другого окна» и оказывался в будущем относительно now
-                // внутри текущего часа — passed обнулялся, дуга не двигалась.
                 if (current != null) {
-                    val anchorMs = current.opensAt.toInstant().toEpochMilli().toFloat()
-                    val endMs = next.opensAt.toInstant().toEpochMilli().toFloat()
-                    val total = (endMs - anchorMs).coerceAtLeast(1f)
-                    val passed = (nowMs - anchorMs).coerceIn(0f, total)
-                    (passed / total).coerceIn(0f, 1f)
+                    val anchorMs = current.opensAt.toInstant().toEpochMilli()
+                    val endMs = next.opensAt.toInstant().toEpochMilli()
+                    val total = maxOf(endMs - anchorMs, 1L)
+                    val passed = (nowMs - anchorMs).coerceIn(0L, total)
+                    (passed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                 } else {
                     progressTowardNextWindow(nowMs, next)
                 }
@@ -165,10 +171,6 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         }
     }
 
-    /**
-     * Начало предыдущего в цикле слота относительно [next.opensAt] (не конец часа).
-     * Совпадает с якорем «Следующее через» ([current.opensAt]), чтобы при смене на «Ожидание» дуга не сбрасывалась.
-     */
     private fun opensAtBeforeNext(next: WindowInfo): ZonedDateTime {
         val zone = WindowCalculator.zone()
         val nextDay = next.opensAt.toLocalDate()
@@ -182,14 +184,13 @@ class SnusViewModel(private val repo: SnusRepository) : ViewModel() {
         }
     }
 
-    /** Прогресс от открытия предыдущего слота до открытия next (ожидание, блокировка, запасной AlreadyUsed). */
-    private fun progressTowardNextWindow(nowMs: Float, next: WindowInfo): Float {
+    private fun progressTowardNextWindow(nowMs: Long, next: WindowInfo): Float {
         val anchor = opensAtBeforeNext(next)
-        val endMs = next.opensAt.toInstant().toEpochMilli().toFloat()
-        val startMs = anchor.toInstant().toEpochMilli().toFloat()
-        val total = (endMs - startMs).coerceAtLeast(1f)
-        val passed = (nowMs - startMs).coerceIn(0f, total)
-        return (passed / total).coerceIn(0f, 1f)
+        val endMs = next.opensAt.toInstant().toEpochMilli()
+        val startMs = anchor.toInstant().toEpochMilli()
+        val total = maxOf(endMs - startMs, 1L)
+        val passed = (nowMs - startMs).coerceIn(0L, total)
+        return (passed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     }
 
     private fun formatHms(seconds: Long): String {
